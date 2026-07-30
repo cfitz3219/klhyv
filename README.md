@@ -42,9 +42,8 @@ Holding that ×8 result in memory the naive way would need about 9 GiB.
 
 ## Status
 
-Early, but the core works end to end. Engine, CLI, neural backend, streaming
-output, and georeferencing are built and tested. No GUI yet — see
-[Roadmap](#roadmap).
+Early, but it works end to end. Engine, desktop app, command line, neural
+backend, streaming output, and georeferencing are all built and tested.
 
 ## Build
 
@@ -74,7 +73,25 @@ ONNX Runtime falls back to CPU when a provider is absent at runtime, so a binary
 built with `cuda` still works on a machine without it. Use `--device cpu` to
 force CPU.
 
-## Use
+## The app
+
+```sh
+cargo run -p tessera-app --release
+```
+
+Drop an image on the window, choose a magnification, press Enlarge. The centre
+of the window is a full-size before/after wipe: drag the handle to compare, and
+click the small map in the corner to look somewhere else.
+
+The comparison is deliberately shown at 1:1 on a region rather than fitting the
+whole result to the window — shrinking a ×4 upscale back down to fit would hide
+exactly the detail you are trying to judge.
+
+Models live in a `models` folder beside the executable. With none installed the
+app still runs, saying plainly in the status bar that it is doing basic resizing
+rather than pretending otherwise.
+
+## Use from the command line
 
 ```sh
 # classical resampling — no model needed, adds no detail
@@ -155,6 +172,7 @@ GeoTIFF tags stored inside the TIFF are not handled yet.
 |---|---|
 | `tessera-core` | Tiling, blending, backends, streaming, world files |
 | `tessera-cli` | `tessera` command-line binary |
+| `tessera-app` | Desktop application (Tauri) |
 
 Inside `tessera-core`:
 
@@ -183,9 +201,8 @@ and returns it magnified. Nothing in the tiling, blending, or I/O path changes.
 
 ## Roadmap
 
-- **GUI.** A Tauri shell over this engine — chosen over Electron because the
-  engine competes with the UI for memory, and a tiled canvas viewer is needed
-  for gigapixel output regardless of framework.
+- **Batch queue.** A second tab in the app for a folder of scans, so one file
+  stays the simple case.
 - **Streaming source and intermediates.** Removes the remaining memory limits
   listed under [Large images](#large-images).
 - **GeoTIFF tags.** Read and rewrite the coordinate system embedded in the TIFF,

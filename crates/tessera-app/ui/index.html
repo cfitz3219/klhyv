@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tessera</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div id="banner" class="banner" hidden>
+    <span class="banner-text"></span>
+    <button class="banner-close" type="button" aria-label="Dismiss">&times;</button>
+  </div>
+
+  <header class="toolbar">
+    <div id="filechip" class="filechip is-empty">
+      <div class="filechip-mark" aria-hidden="true"></div>
+      <div class="filechip-text">
+        <span class="filechip-name">No image yet</span>
+        <span class="filechip-sub">Drop one anywhere</span>
+      </div>
+    </div>
+
+    <div class="control">
+      <label class="control-label" for="scale-value">Enlarge</label>
+      <div class="stepper">
+        <button type="button" id="scale-down" aria-label="Less">&minus;</button>
+        <output class="stepper-value" id="scale-value">4&times;</output>
+        <button type="button" id="scale-up" aria-label="More">+</button>
+      </div>
+    </div>
+
+    <div class="control">
+      <span class="control-label">Detail</span>
+      <div class="segmented" id="style-picker" role="group">
+        <button type="button" class="on" data-style="maps">Maps</button>
+        <button type="button" data-style="photos">Photos</button>
+      </div>
+    </div>
+
+    <div class="control">
+      <span class="control-label">Result</span>
+      <span class="dims" id="result-dims">&mdash;</span>
+    </div>
+
+    <button type="button" class="go" id="go" disabled>Enlarge</button>
+  </header>
+
+  <main class="stage" id="stage">
+
+    <section class="empty" id="empty">
+      <div class="empty-mark" aria-hidden="true"></div>
+      <h1>Drop a map or photo here</h1>
+      <p>Or <button type="button" class="linkish" id="browse">choose a file</button>.
+         Large scans are fine &mdash; there is no size limit.</p>
+    </section>
+
+    <section class="compare" id="compare" hidden>
+      <div class="viewport" id="viewport">
+        <img class="layer before" id="img-before" alt="Original, enlarged the ordinary way" />
+        <img class="layer after" id="img-after" alt="Enlarged by Tessera" />
+        <span class="stamp stamp-before">ORIGINAL</span>
+        <span class="stamp stamp-after" id="stamp-after">ENLARGED</span>
+        <div class="divider" id="divider"></div>
+        <button type="button" class="grip" id="grip" aria-label="Drag to compare">&#9666;&#9656;</button>
+      </div>
+
+      <div class="navigator" id="navigator" title="Click to look somewhere else">
+        <img id="nav-img" alt="Whole image" />
+        <span class="nav-box" id="nav-box"></span>
+      </div>
+
+      <div class="working" id="working" hidden>
+        <div class="working-inner">
+          <span class="working-tile" id="working-tile">Starting&hellip;</span>
+          <span class="meter"><i id="meter-fill"></i></span>
+          <span class="working-pct" id="working-pct">0%</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="spinner" id="spinner" hidden><i></i><span>Rendering preview&hellip;</span></div>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-size">&mdash;</span>
+    <span id="status-geo" class="kept" hidden>MAP POSITION KEPT</span>
+    <span id="status-engine">&mdash;</span>
+    <span class="right" id="status-right"></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

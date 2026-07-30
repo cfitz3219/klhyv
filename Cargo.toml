@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/tessera-core", "crates/tessera-cli"]
+members = ["crates/tessera-core", "crates/tessera-cli", "crates/tessera-app"]
 resolver = "2"
 
 [workspace.package]

@@ -28,6 +28,15 @@ pub trait Upscaler: Send + Sync {
     /// Fixed integer magnification this backend produces.
     fn scale_factor(&self) -> u32;
 
+    /// Tile size this backend requires, if it constrains one.
+    ///
+    /// Models with a fixed input shape must be fed exactly that many pixels.
+    /// Reporting it here means callers configure themselves instead of leaving
+    /// the user to discover the right tile size from an error message.
+    fn preferred_tile(&self) -> Option<u32> {
+        None
+    }
+
     /// Upscale a single tile. Output must be exactly `scale_factor()` times the
     /// input in both dimensions.
     fn upscale(&self, tile: &RgbaImage) -> Result<RgbaImage>;

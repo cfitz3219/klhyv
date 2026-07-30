@@ -180,6 +180,11 @@ impl Upscaler for OnnxBackend {
         self.scale
     }
 
+    fn preferred_tile(&self) -> Option<u32> {
+        // Square tiles only, so the smaller side governs.
+        self.fixed_input.map(|f| f.width.min(f.height))
+    }
+
     fn upscale(&self, tile: &RgbaImage) -> Result<RgbaImage> {
         let (tw, th) = tile.dimensions();
         ensure!(tw > 0 && th > 0, "cannot upscale a zero-sized tile");
