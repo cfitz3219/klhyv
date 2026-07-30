@@ -1,12 +1,15 @@
 //! Tiled upscaling: cut, upscale each piece, cross-fade back together.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use anyhow::{ensure, Result};
+use image::imageops::FilterType;
 use image::{Rgba, RgbaImage};
 use rayon::prelude::*;
 
 use crate::backend::Upscaler;
+use crate::scale::ScaleStrategy;
 use crate::tiling::{Tile, TilePlan};
 
 /// Knobs for a single run.
@@ -159,6 +162,63 @@ pub fn upscale_tiled(
     Ok(acc.into_inner().unwrap().resolve())
 }
 
+/// Upscale `source` to exactly `target` times its size.
+///
+/// Runs the model as many times as needed to reach or exceed `target`, then
+/// resamples down to the exact size. See [`ScaleStrategy`] for why overshooting
+/// beats stretching.
+pub fn upscale_to_target(
+    source: &RgbaImage,
+    backend: &dyn Upscaler,
+    target: u32,
+    opts: UpscaleOptions,
+    progress: Option<&(dyn Fn(usize, usize) + Sync)>,
+) -> Result<RgbaImage> {
+    let (src_w, src_h) = source.dimensions();
+    ensure!(src_w > 0 && src_h > 0, "source image is empty");
+
+    let native = backend.scale_factor();
+    let strategy = ScaleStrategy::plan(target, native)?;
+
+    // Count the work of every pass up front, so progress runs once from start
+    // to finish instead of restarting at each pass.
+    let mut dims = (src_w, src_h);
+    let mut total = 0usize;
+    for _ in 0..strategy.passes {
+        total += TilePlan::new(dims.0, dims.1, native, opts.tile, opts.overlap)
+            .tiles
+            .len();
+        dims = (dims.0 * native, dims.1 * native);
+    }
+
+    let done = AtomicUsize::new(0);
+    let relay = |_: usize, _: usize| {
+        let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+        if let Some(cb) = progress {
+            cb(n, total);
+        }
+    };
+    let relay_ref: Option<&(dyn Fn(usize, usize) + Sync)> =
+        progress.is_some().then_some(&relay);
+
+    let mut current = source.clone();
+    for _ in 0..strategy.passes {
+        current = upscale_tiled(&current, backend, opts, relay_ref)?;
+    }
+
+    if strategy.needs_resample() {
+        current = image::imageops::resize(
+            &current,
+            src_w * target,
+            src_h * target,
+            FilterType::Lanczos3,
+        );
+    }
+
+    debug_assert_eq!(current.dimensions(), (src_w * target, src_h * target));
+    Ok(current)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,6 +359,64 @@ mod tests {
         let mut counts: Vec<usize> = seen.iter().map(|&(n, _)| n).collect();
         counts.sort_unstable();
         assert_eq!(counts, (1..=total).collect::<Vec<_>>());
+    }
+
+    /// The slider's promise: whatever stop the user picks, the output is
+    /// exactly that many times the input, including factors the model has no
+    /// native pass for.
+    #[test]
+    fn every_target_scale_lands_exactly() {
+        let src = test_pattern(40, 28);
+        // A 2x model must still deliver 3x, 5x, 7x and so on.
+        let backend = ResampleBackend::new(2, "lanczos3").unwrap();
+        for target in 1..=10u32 {
+            let out = upscale_to_target(
+                &src,
+                &backend,
+                target,
+                UpscaleOptions { tile: 32, overlap: 8 },
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                out.dimensions(),
+                (40 * target, 28 * target),
+                "target {target}x produced the wrong size"
+            );
+        }
+    }
+
+    /// Progress must climb once to its total across all passes, not restart.
+    #[test]
+    fn progress_is_continuous_across_passes() {
+        let src = test_pattern(64, 64);
+        let backend = ResampleBackend::new(2, "triangle").unwrap();
+        let seen = Mutex::new(Vec::new());
+        // 2x model, 7x target: three passes to 8x, then a resample down.
+        upscale_to_target(
+            &src,
+            &backend,
+            7,
+            UpscaleOptions { tile: 32, overlap: 8 },
+            Some(&|n, total| seen.lock().unwrap().push((n, total))),
+        )
+        .unwrap();
+
+        let seen = seen.into_inner().unwrap();
+        let total = seen[0].1;
+        assert_eq!(seen.len(), total, "reported count must match the total");
+        let mut counts: Vec<usize> = seen.iter().map(|&(n, _)| n).collect();
+        counts.sort_unstable();
+        assert_eq!(counts, (1..=total).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn unit_target_returns_the_original_size() {
+        let src = test_pattern(50, 30);
+        let backend = ResampleBackend::new(4, "lanczos3").unwrap();
+        let out =
+            upscale_to_target(&src, &backend, 1, UpscaleOptions::default(), None).unwrap();
+        assert_eq!(out.dimensions(), (50, 30));
     }
 
     #[test]

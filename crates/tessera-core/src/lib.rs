@@ -17,10 +17,12 @@
 
 pub mod backend;
 pub mod pipeline;
+pub mod scale;
 pub mod tiling;
 pub mod world;
 
 pub use backend::Upscaler;
-pub use pipeline::{accumulator_bytes, upscale_tiled, UpscaleOptions};
+pub use pipeline::{accumulator_bytes, upscale_tiled, upscale_to_target, UpscaleOptions};
+pub use scale::ScaleStrategy;
 pub use tiling::TilePlan;
 pub use world::WorldFile;

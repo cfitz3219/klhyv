@@ -67,11 +67,34 @@ force CPU.
 tessera scan.png out.png --scale 4
 
 # neural upscaling
-tessera map.tif map-4x.png --backend onnx --model realesrgan-x4.onnx --tile 128
+tessera map.tif map-7x.png --backend onnx --model realesrgan-x4.onnx --tile 128 --scale 7
 ```
 
-The scale factor is read from the model, so `--scale` is only needed for models
-with fully dynamic shapes. Run `tessera --help` for all options.
+Run `tessera --help` for all options.
+
+### Choosing a magnification
+
+`--scale` takes any whole number from 1 to 10, whatever factor the model was
+trained at.
+
+Models bake their factor into the weights — a ×4 model only ever produces ×4 —
+so other factors are reached by running the model until the result *exceeds* the
+request, then resampling down to the exact size. Asking for ×7 from a ×4 model
+runs two passes to ×16 and shrinks. That beats one pass to ×4 stretched up to
+×7, which only blurs what the model produced.
+
+Tessera prints its plan before starting:
+
+```
+plan: 2 model passes to 16x, then resample to 7x
+```
+
+`--scale 1` is not a no-op: it runs one model pass and shrinks back, which is
+how these models strip compression artifacts and scanning noise without
+changing the image's size.
+
+Peak memory follows the largest intermediate, not the final size, which is why
+the reported buffer for ×7 matches ×16.
 
 Tiles are processed in parallel. Lower `--tile` if memory is tight; raise
 `--overlap` if a model produces strong edge artifacts. If a model fixes its

@@ -7,7 +7,7 @@ use std::time::Instant;
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
 use tessera_core::backend::{ResampleBackend, Upscaler};
-use tessera_core::{accumulator_bytes, pipeline, world, UpscaleOptions};
+use tessera_core::{accumulator_bytes, pipeline, world, ScaleStrategy, UpscaleOptions};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 enum BackendKind {
@@ -39,9 +39,11 @@ struct Args {
     /// Where to write the result. Format follows the extension.
     output: PathBuf,
 
-    /// Magnification factor. Read from the model when using --backend onnx.
-    #[arg(short, long, value_parser = clap::value_parser!(u32).range(1..=16))]
-    scale: Option<u32>,
+    /// Magnification, 1 to 10. With a fixed-factor model the run overshoots
+    /// this and resamples down, so any value is reachable. 1 restores without
+    /// resizing.
+    #[arg(short, long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=10))]
+    scale: u32,
 
     /// Tile edge length, in source pixels. Lower this if you run out of memory.
     #[arg(short, long, default_value_t = 256)]
@@ -59,6 +61,12 @@ struct Args {
     #[cfg(feature = "onnx")]
     #[arg(short, long)]
     model: Option<PathBuf>,
+
+    /// The model's own magnification. Only needed for models whose shapes are
+    /// dynamic, where it cannot be read from the file.
+    #[cfg(feature = "onnx")]
+    #[arg(long)]
+    model_scale: Option<u32>,
 
     /// Where to run inference, for --backend onnx.
     #[cfg(feature = "onnx")]
@@ -85,10 +93,8 @@ struct Args {
 
 fn build_backend(args: &Args) -> Result<Box<dyn Upscaler>> {
     match args.backend {
-        BackendKind::Resample => {
-            let scale = args.scale.unwrap_or(4);
-            Ok(Box::new(ResampleBackend::new(scale, &args.filter)?))
-        }
+        // Resampling reaches any factor directly, so it needs no pass chaining.
+        BackendKind::Resample => Ok(Box::new(ResampleBackend::new(args.scale, &args.filter)?)),
         #[cfg(feature = "onnx")]
         BackendKind::Onnx => {
             use tessera_core::backend::{Device, OnnxBackend};
@@ -100,7 +106,7 @@ fn build_backend(args: &Args) -> Result<Box<dyn Upscaler>> {
                 DeviceKind::Auto => Device::Auto,
                 DeviceKind::Cpu => Device::Cpu,
             };
-            Ok(Box::new(OnnxBackend::new(model, device, args.scale)?))
+            Ok(Box::new(OnnxBackend::new(model, device, args.model_scale)?))
         }
     }
 }
@@ -115,8 +121,8 @@ fn main() -> Result<()> {
     let (w, h) = source.dimensions();
 
     let backend = build_backend(&args)?;
-    // The model, not the flag, is the authority on scale once one is loaded.
-    let scale = backend.scale_factor();
+    let scale = args.scale;
+    let strategy = ScaleStrategy::plan(scale, backend.scale_factor())?;
 
     let opts = UpscaleOptions {
         tile: args.tile,
@@ -126,19 +132,21 @@ fn main() -> Result<()> {
     let (out_w, out_h) = (w * scale, h * scale);
     if !args.quiet {
         eprintln!(
-            "{}x{} -> {}x{}  scale {}x  backend {}  tile {} overlap {}",
+            "{}x{} -> {}x{}  backend {}  tile {} overlap {}",
             w,
             h,
             out_w,
             out_h,
-            scale,
             backend.name(),
             args.tile,
             args.overlap
         );
+        eprintln!("plan: {}", strategy.describe());
+        // Peak memory is set by the largest intermediate, not the final size.
         eprintln!(
-            "blend buffer needs ~{:.1} GiB",
-            accumulator_bytes(out_w, out_h) as f64 / (1024.0 * 1024.0 * 1024.0)
+            "blend buffer needs ~{:.1} GiB at peak",
+            accumulator_bytes(w * strategy.intermediate, h * strategy.intermediate) as f64
+                / (1024.0 * 1024.0 * 1024.0)
         );
     }
 
@@ -148,9 +156,10 @@ fn main() -> Result<()> {
         eprint!("\rtile {done}/{total}");
         let _ = io::stderr().flush();
     };
-    let result = pipeline::upscale_tiled(
+    let result = pipeline::upscale_to_target(
         &source,
         backend.as_ref(),
+        scale,
         opts,
         if args.quiet { None } else { Some(&progress) },
     )?;
