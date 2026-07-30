@@ -1,0 +1,15 @@
+[package]
+name = "tessera-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tessera"
+path = "src/main.rs"
+
+[dependencies]
+tessera-core = { path = "../tessera-core" }
+anyhow.workspace = true
+clap.workspace = true
+image.workspace = true
