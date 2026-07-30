@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
 use tessera_core::backend::{ResampleBackend, Upscaler};
 use tessera_core::{accumulator_bytes, pipeline, world, UpscaleOptions};
@@ -13,6 +13,17 @@ use tessera_core::{accumulator_bytes, pipeline, world, UpscaleOptions};
 enum BackendKind {
     /// Classical resampling on the CPU. Runs anywhere; adds no detail.
     Resample,
+    /// Neural upscaling through an ONNX model. Needs --model.
+    #[cfg(feature = "onnx")]
+    Onnx,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum DeviceKind {
+    /// Use a GPU provider when one is compiled in and present.
+    Auto,
+    /// Force CPU inference.
+    Cpu,
 }
 
 #[derive(Parser, Debug)]
@@ -28,9 +39,9 @@ struct Args {
     /// Where to write the result. Format follows the extension.
     output: PathBuf,
 
-    /// Magnification factor.
-    #[arg(short, long, default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..=16))]
-    scale: u32,
+    /// Magnification factor. Read from the model when using --backend onnx.
+    #[arg(short, long, value_parser = clap::value_parser!(u32).range(1..=16))]
+    scale: Option<u32>,
 
     /// Tile edge length, in source pixels. Lower this if you run out of memory.
     #[arg(short, long, default_value_t = 256)]
@@ -43,6 +54,16 @@ struct Args {
     /// Upscaling backend.
     #[arg(short, long, value_enum, default_value_t = BackendKind::Resample)]
     backend: BackendKind,
+
+    /// Path to a .onnx super-resolution model, for --backend onnx.
+    #[cfg(feature = "onnx")]
+    #[arg(short, long)]
+    model: Option<PathBuf>,
+
+    /// Where to run inference, for --backend onnx.
+    #[cfg(feature = "onnx")]
+    #[arg(long, value_enum, default_value_t = DeviceKind::Auto)]
+    device: DeviceKind,
 
     /// Resampling filter, for the resample backend.
     #[arg(
@@ -62,24 +83,47 @@ struct Args {
     quiet: bool,
 }
 
+fn build_backend(args: &Args) -> Result<Box<dyn Upscaler>> {
+    match args.backend {
+        BackendKind::Resample => {
+            let scale = args.scale.unwrap_or(4);
+            Ok(Box::new(ResampleBackend::new(scale, &args.filter)?))
+        }
+        #[cfg(feature = "onnx")]
+        BackendKind::Onnx => {
+            use tessera_core::backend::{Device, OnnxBackend};
+            let model = args
+                .model
+                .as_ref()
+                .context("--backend onnx needs --model pointing at a .onnx file")?;
+            let device = match args.device {
+                DeviceKind::Auto => Device::Auto,
+                DeviceKind::Cpu => Device::Cpu,
+            };
+            Ok(Box::new(OnnxBackend::new(model, device, args.scale)?))
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
+    ensure!(args.tile >= 1, "--tile must be at least 1");
 
     let source = image::open(&args.input)
         .with_context(|| format!("opening {}", args.input.display()))?
         .to_rgba8();
     let (w, h) = source.dimensions();
 
-    let backend: Box<dyn Upscaler> = match args.backend {
-        BackendKind::Resample => Box::new(ResampleBackend::new(args.scale, &args.filter)?),
-    };
+    let backend = build_backend(&args)?;
+    // The model, not the flag, is the authority on scale once one is loaded.
+    let scale = backend.scale_factor();
 
     let opts = UpscaleOptions {
         tile: args.tile,
         overlap: args.overlap,
     };
 
-    let (out_w, out_h) = (w * args.scale, h * args.scale);
+    let (out_w, out_h) = (w * scale, h * scale);
     if !args.quiet {
         eprintln!(
             "{}x{} -> {}x{}  scale {}x  backend {}  tile {} overlap {}",
@@ -87,7 +131,7 @@ fn main() -> Result<()> {
             h,
             out_w,
             out_h,
-            args.scale,
+            scale,
             backend.name(),
             args.tile,
             args.overlap
@@ -125,18 +169,18 @@ fn main() -> Result<()> {
         .with_context(|| format!("writing {}", args.output.display()))?;
 
     if !args.no_world {
-        carry_world_file(&args, !args.quiet)?;
+        carry_world_file(&args, scale, !args.quiet)?;
     }
 
     Ok(())
 }
 
 /// Rewrite the georeferencing sidecar for the new pixel size, if there is one.
-fn carry_world_file(args: &Args, verbose: bool) -> Result<()> {
+fn carry_world_file(args: &Args, scale: u32, verbose: bool) -> Result<()> {
     let Some((src_path, world_in)) = world::read_sidecar(&args.input)? else {
         return Ok(());
     };
-    let written = world::write_sidecar(&args.output, world_in.scaled(args.scale))?;
+    let written = world::write_sidecar(&args.output, world_in.scaled(scale))?;
     if verbose {
         eprintln!(
             "georeference {} -> {}",

@@ -12,3 +12,4 @@ anyhow = "1"
 image = "0.25"
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
+ort = { version = "2.0.0-rc.13", default-features = false }

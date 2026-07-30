@@ -9,7 +9,13 @@ use image::RgbaImage;
 
 mod resample;
 
+#[cfg(feature = "onnx")]
+mod onnx;
+
 pub use resample::ResampleBackend;
+
+#[cfg(feature = "onnx")]
+pub use onnx::{Device, OnnxBackend};
 
 /// Turns one tile into a `scale_factor()`-times larger tile.
 ///
