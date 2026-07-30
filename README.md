@@ -45,7 +45,17 @@ Holding that ×8 result in memory the naive way would need about 9 GiB.
 Early, but it works end to end. Engine, desktop app, command line, neural
 backend, streaming output, and georeferencing are all built and tested.
 
-## Build
+## Download
+
+Every push builds a Windows folder that runs by double-clicking, with the
+enlarging model already inside. Find it under the repository's **Actions** tab,
+open the most recent run, and download **Tessera-windows** from the bottom of
+the page. Tagging a version publishes the same thing as a release.
+
+The shipped build uses DirectML, which runs on any Windows graphics card with
+nothing to install.
+
+## Build it yourself
 
 ```sh
 cargo build --release
@@ -87,9 +97,9 @@ The comparison is deliberately shown at 1:1 on a region rather than fitting the
 whole result to the window — shrinking a ×4 upscale back down to fit would hide
 exactly the detail you are trying to judge.
 
-Models live in a `models` folder beside the executable. With none installed the
-app still runs, saying plainly in the status bar that it is doing basic resizing
-rather than pretending otherwise.
+Models live in a `models` folder beside the executable; the Windows download
+already has one. With none installed the app still runs, saying plainly in the
+status bar that it is doing basic resizing rather than pretending otherwise.
 
 ## Use from the command line
 
@@ -148,9 +158,12 @@ Three limits remain, in rough order of when you would hit them:
 
 ### Models
 
-Models are not bundled: super-resolution weights carry their own licences, and
-the right model for a scanned map is not the right one for a photograph. Any
-Real-ESRGAN-style ONNX model works — RGB `NCHW` in, RGB `NCHW` out, values in
+The Windows download ships with Real-ESRGAN, which is BSD-3-Clause and travels
+under the licence notice in its folder. Building from source does not fetch a
+model, since the right one for a scanned map is not the right one for a
+photograph and the choice should be deliberate.
+
+Any Real-ESRGAN-style ONNX model works — RGB `NCHW` in, RGB `NCHW` out, values in
 0..1. Tested against `real-esrgan-x4plus-128`.
 
 Alpha is handled separately, since these models are RGB-only: it is resampled
