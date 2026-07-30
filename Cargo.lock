@@ -1241,6 +1241,7 @@ dependencies = [
  "anyhow",
  "image",
  "ort",
+ "png",
  "rayon",
 ]
 

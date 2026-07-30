@@ -7,7 +7,9 @@ use std::time::Instant;
 use anyhow::{ensure, Context, Result};
 use clap::{Parser, ValueEnum};
 use tessera_core::backend::{ResampleBackend, Upscaler};
-use tessera_core::{accumulator_bytes, pipeline, world, ScaleStrategy, UpscaleOptions};
+use tessera_core::{
+    accumulator_bytes, pipeline, world, PngSink, ScaleStrategy, UpscaleOptions,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 enum BackendKind {
@@ -142,11 +144,12 @@ fn main() -> Result<()> {
             args.overlap
         );
         eprintln!("plan: {}", strategy.describe());
-        // Peak memory is set by the largest intermediate, not the final size.
+        // Only the tile rows in flight are resident, so this tracks the widest
+        // intermediate rather than the whole result.
         eprintln!(
-            "blend buffer needs ~{:.1} GiB at peak",
-            accumulator_bytes(w * strategy.intermediate, h * strategy.intermediate) as f64
-                / (1024.0 * 1024.0 * 1024.0)
+            "blend buffer needs ~{:.0} MiB at peak",
+            accumulator_bytes(w * strategy.intermediate, args.tile, backend.scale_factor()) as f64
+                / (1024.0 * 1024.0)
         );
     }
 
@@ -156,26 +159,36 @@ fn main() -> Result<()> {
         eprint!("\rtile {done}/{total}");
         let _ = io::stderr().flush();
     };
-    let result = pipeline::upscale_to_target(
-        &source,
-        backend.as_ref(),
-        scale,
-        opts,
-        if args.quiet { None } else { Some(&progress) },
-    )?;
-    if !args.quiet {
-        eprintln!("\rdone in {:.1}s{:12}", started.elapsed().as_secs_f64(), "");
-    }
-
     if let Some(parent) = args.output.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("creating {}", parent.display()))?;
         }
     }
-    result
-        .save(&args.output)
-        .with_context(|| format!("writing {}", args.output.display()))?;
+
+    let reporter = if args.quiet { None } else { Some(&progress as _) };
+    let writes_png = args
+        .output
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+
+    if writes_png {
+        // Rows go straight to disk, so output size is not bounded by memory.
+        let mut sink = PngSink::create(&args.output, out_w, out_h)?;
+        pipeline::upscale_to_sink(&source, backend.as_ref(), scale, opts, &mut sink, reporter)?;
+    } else {
+        // Other formats need the whole image before they can be encoded.
+        let result =
+            pipeline::upscale_to_target(&source, backend.as_ref(), scale, opts, reporter)?;
+        result
+            .save(&args.output)
+            .with_context(|| format!("writing {}", args.output.display()))?;
+    }
+
+    if !args.quiet {
+        eprintln!("\rdone in {:.1}s{:12}", started.elapsed().as_secs_f64(), "");
+    }
 
     if !args.no_world {
         carry_world_file(&args, scale, !args.quiet)?;

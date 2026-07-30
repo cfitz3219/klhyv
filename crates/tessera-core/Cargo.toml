@@ -20,5 +20,6 @@ coreml = ["onnx", "ort/coreml"]
 [dependencies]
 anyhow.workspace = true
 image.workspace = true
+png.workspace = true
 rayon.workspace = true
 ort = { workspace = true, optional = true }

@@ -9,15 +9,17 @@ neural model is not shift-invariant: two tiles covering the same pixel disagree
 about it, and that disagreement shows up as a grid across the output.
 
 Tessera is the part that makes tiling invisible: overlapping tiles, cross-faded
-with weights that reconstruct the un-tiled result.
+with weights that reconstruct the un-tiled result. It streams the result to disk
+a band at a time, so output size is not limited by memory. And it carries
+georeferencing across, which general-purpose upscalers drop.
 
-It also carries georeferencing across, which general-purpose upscalers drop.
+## Does it actually work?
 
-## Does the blending actually work?
+Measured, not asserted.
 
-Measured, not asserted. Upscaling a texture-rich image 4× with Real-ESRGAN at
-128px tiles, then measuring the column-to-column step at the tile edge against
-the local median step of nearby columns:
+**Seams.** Upscaling a texture-rich image 4× with Real-ESRGAN at 128px tiles,
+then measuring the column-to-column step at the tile edge against the local
+median step of nearby columns:
 
 | Setting | Step at tile edge vs. local baseline |
 |---|---|
@@ -27,10 +29,22 @@ the local median step of nearby columns:
 Against the classical backend, where an un-tiled reference exists to compare
 with, the worst channel error across tile configurations is 1–4 out of 255.
 
+**Memory.** A 3000 × 2000 source upscaled on a machine with no special
+provisions:
+
+| Run | Output | Peak memory |
+|---|---|---|
+| ×4, `--tile 256` | 12,000 × 8,000 | 405 MiB |
+| ×4, `--tile 128` | 12,000 × 8,000 | 224 MiB |
+| ×8, `--tile 256` | 24,000 × 16,000 (384 Mpx) | 1,306 MiB |
+
+Holding that ×8 result in memory the naive way would need about 9 GiB.
+
 ## Status
 
-Early, but the core works end to end. Engine, CLI, neural backend, and
-georeferencing are built and tested. No GUI yet — see [Roadmap](#roadmap).
+Early, but the core works end to end. Engine, CLI, neural backend, streaming
+output, and georeferencing are built and tested. No GUI yet — see
+[Roadmap](#roadmap).
 
 ## Build
 
@@ -93,12 +107,27 @@ plan: 2 model passes to 16x, then resample to 7x
 how these models strip compression artifacts and scanning noise without
 changing the image's size.
 
-Peak memory follows the largest intermediate, not the final size, which is why
-the reported buffer for ×7 matches ×16.
+### Large images
 
-Tiles are processed in parallel. Lower `--tile` if memory is tight; raise
-`--overlap` if a model produces strong edge artifacts. If a model fixes its
-input size, `--tile` must match it — Tessera says so if it doesn't.
+Output is produced one row of tiles at a time. Finished rows go straight to the
+file, and only the rows still being blended stay resident, so peak memory
+depends on the tile size and image *width* — not on how tall the result is.
+
+Two consequences worth knowing:
+
+- **Lower `--tile` when memory is tight.** Halving it roughly halves peak usage.
+- **Write PNG for the largest jobs.** PNG is encoded row by row as results
+  arrive. Other formats have to be assembled in memory first.
+
+Three limits remain, in rough order of when you would hit them:
+
+- A magnification that is not a whole number of model passes (×3, ×5, ×6, ×7…)
+  has to hold the final intermediate in memory so it can be resampled down.
+  Exact multiples of the model's factor stream all the way through.
+- The source image is held in memory. That is 4 bytes per pixel against 20 for
+  the blend buffer, so it is rarely the binding constraint, but a 20,000 ×
+  20,000 scan is still 1.6 GiB.
+- Intermediate passes in a multi-pass run are held in memory.
 
 ### Models
 
@@ -124,13 +153,15 @@ GeoTIFF tags stored inside the TIFF are not handled yet.
 
 | Crate | Contents |
 |---|---|
-| `tessera-core` | Tiling, blending, backends, world files |
+| `tessera-core` | Tiling, blending, backends, streaming, world files |
 | `tessera-cli` | `tessera` command-line binary |
 
 Inside `tessera-core`:
 
 - `tiling.rs` — tile placement and blend weights
-- `pipeline.rs` — parallel tile processing and premultiplied accumulation
+- `pipeline.rs` — banded processing and premultiplied accumulation
+- `sink.rs` — where finished rows go: memory, or streamed to a PNG
+- `scale.rs` — reaching any magnification with a fixed-factor model
 - `backend/resample.rs` — classical reference backend
 - `backend/onnx.rs` — neural backend via ONNX Runtime
 - `world.rs` — world-file parsing, scaling, and sidecar naming
@@ -144,22 +175,24 @@ neighbour, so opposing ramps always span exactly the shared region and sum to
 one. Contributions accumulate in premultiplied alpha and are normalised by total
 weight, which keeps the blend correct where tiles meet across transparency.
 
+Because output is produced in bands, partial sums for the rows shared between
+one row of tiles and the next are carried forward rather than resolved early.
+
 Adding a backend means implementing `Upscaler` — one method that takes a tile
 and returns it magnified. Nothing in the tiling, blending, or I/O path changes.
 
 ## Roadmap
 
-- **Streaming I/O.** The blend accumulator is in memory at ~20 bytes per output
-  pixel, which caps practical output size. Streaming tiles to and from disk
-  removes the cap. The CLI prints the buffer estimate before starting.
+- **GUI.** A Tauri shell over this engine — chosen over Electron because the
+  engine competes with the UI for memory, and a tiled canvas viewer is needed
+  for gigapixel output regardless of framework.
+- **Streaming source and intermediates.** Removes the remaining memory limits
+  listed under [Large images](#large-images).
 - **GeoTIFF tags.** Read and rewrite the coordinate system embedded in the TIFF,
   not just the sidecar.
 - **Content-aware model routing.** Maps are text, line art, and halftone, not
   photographs; photo-trained models hallucinate texture into linework. Route by
   content type, with halftone descreening before upscaling.
-- **GUI.** A Tauri shell over this engine — chosen over Electron because the
-  engine competes with the UI for memory, and a tiled canvas viewer is needed
-  for gigapixel output regardless of framework.
 
 ## License
 
