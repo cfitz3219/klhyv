@@ -1,0 +1,23 @@
+[package]
+name = "tessera-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tessera"
+path = "src/main.rs"
+
+[features]
+default = ["onnx"]
+onnx = ["tessera-core/onnx"]
+cuda = ["tessera-core/cuda"]
+tensorrt = ["tessera-core/tensorrt"]
+directml = ["tessera-core/directml"]
+coreml = ["tessera-core/coreml"]
+
+[dependencies]
+tessera-core = { path = "../tessera-core", default-features = false }
+anyhow.workspace = true
+clap.workspace = true
+image.workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "tessera-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["onnx"]
+# Neural upscaling via ONNX Runtime. Fetches a prebuilt runtime at build time,
+# which needs a TLS provider selected explicitly.
+onnx = ["dep:ort", "ort/std", "ort/download-binaries", "ort/tls-rustls"]
+# GPU execution providers. Each needs its vendor runtime present to engage;
+# ONNX Runtime falls back to CPU when one is missing, so enabling a provider
+# never breaks a machine that lacks it.
+cuda = ["onnx", "ort/cuda"]
+tensorrt = ["onnx", "ort/tensorrt"]
+directml = ["onnx", "ort/directml"]
+coreml = ["onnx", "ort/coreml"]
+
+[dependencies]
+anyhow.workspace = true
+image.workspace = true
+png.workspace = true
+rayon.workspace = true
+ort = { workspace = true, optional = true }

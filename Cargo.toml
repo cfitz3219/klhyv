@@ -1,0 +1,16 @@
+[workspace]
+members = ["crates/tessera-core", "crates/tessera-cli", "crates/tessera-app"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+image = "0.25"
+png = "0.18"
+rayon = "1"
+clap = { version = "4", features = ["derive"] }
+ort = { version = "2.0.0-rc.13", default-features = false }

@@ -1,0 +1,140 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # The seam and memory guarantees are the whole point of this project, so a
+  # warning is treated as a failure rather than left to rot.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  check:
+    name: Tests and lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # Tauri needs the system webview to compile on Linux.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev \
+            libayatana-appindicator3-dev
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+
+      # The engine must stay usable without ONNX Runtime present.
+      - name: Build without the neural backend
+        run: cargo build --workspace --no-default-features
+
+  windows:
+    name: Windows application
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # DirectML rather than CUDA: it runs on any Windows GPU with nothing for
+      # the user to install, where CUDA would require a toolkit on their machine.
+      - name: Build application
+        run: cargo build --release -p tessera-app --features directml
+
+      - name: Build command line tool
+        run: cargo build --release -p tessera-cli
+
+      - name: Assemble the download
+        shell: pwsh
+        run: |
+          $dist = "dist/Tessera"
+          New-Item -ItemType Directory -Force -Path "$dist/models" | Out-Null
+
+          Copy-Item target/release/tessera-app.exe "$dist/Tessera.exe"
+          Copy-Item target/release/tessera.exe "$dist/tessera-cli.exe"
+          # ONNX Runtime ships as DLLs that must sit beside the executable.
+          Copy-Item target/release/*.dll $dist -ErrorAction SilentlyContinue
+
+          # Real-ESRGAN is BSD-3-Clause, so it can travel with the app. Shipping
+          # it means the download works on its own rather than sending people
+          # hunting for a model file.
+          Invoke-WebRequest -Uri "https://huggingface.co/bukuroo/RealESRGAN-ONNX/resolve/main/real-esrgan-x4plus-128.onnx" `
+            -OutFile "$dist/models/realesrgan-x4plus-128.onnx"
+
+          Set-Content "$dist/models/MODEL-LICENCE.txt" @"
+          real-esrgan-x4plus-128.onnx
+          From https://huggingface.co/bukuroo/RealESRGAN-ONNX
+          Real-ESRGAN by Xintao Wang and others, BSD 3-Clause Licence.
+
+          Redistribution and use in source and binary forms, with or without
+          modification, are permitted provided that the conditions of the BSD
+          3-Clause Licence are met. This software is provided by the copyright
+          holders "as is" and any express or implied warranties are disclaimed.
+          "@
+
+          Set-Content "$dist/READ ME FIRST.txt" @"
+          Tessera
+          =======
+
+          Double-click Tessera.exe. Nothing to install.
+
+          Drag a map or photo onto the window, choose how much bigger you want
+          it, and press Enlarge.
+
+          The middle of the window compares the original with the result. Drag
+          the round handle left and right to wipe between them, and click the
+          small map in the bottom corner to look at a different part of the
+          image.
+
+          Keep the models folder next to Tessera.exe. That is where the
+          enlarging model lives; without it the app still runs but only does
+          plain resizing, and it will say so at the bottom of the window.
+
+          If Windows warns that the publisher is unknown, that is because this
+          build is not signed with a purchased certificate. Choose More info,
+          then Run anyway.
+
+          tessera-cli.exe is the same engine without a window, for scripting.
+          Run it from a terminal with --help to see the options.
+          "@
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tessera-windows
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [check, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Tessera-windows
+          path: dist
+
+      - name: Zip
+        run: cd dist && zip -r ../Tessera-windows.zip Tessera
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: Tessera-windows.zip
+          generate_release_notes: true
